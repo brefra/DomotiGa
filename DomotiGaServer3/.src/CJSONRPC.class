@@ -56,6 +56,7 @@ Private $iSSLCertificate As Integer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public hServerSocket As CServerSocket
 Private $cClients As New Object[]
+Private $cSubscribersDeviceUpdate As New Boolean[]
 Private $sCurrentMethod As String
 Private $cMethods As New String[]
 Private $cIPWhiteList As New String[]
@@ -381,6 +382,7 @@ Private Sub Disconnect()
 
   ' Clear the client list
   $cClients.Clear()
+  $cSubscribersDeviceUpdate.Clear()
 
   Try hServerSocket.Close()
 
@@ -430,6 +432,7 @@ Public Sub hServerSocket_Connection(RemoteHost As String)
   hS.HTTPHeaders = ["content-type: application/json"]
 
   $cClients.Add(hS)
+  $cSubscribersDeviceUpdate.Add(False, $cClients.Find(hS))
 
   If $bDebug Then WriteDebugLog("Client added. Total " & $cClients.Count & " client(s) connected.")
 
@@ -440,8 +443,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub RemoveSocket(hS As CSocket)
 
+  Dim iIndex As Integer
+  iIndex = $cClients.Find(hS)
   Try $cClients.Remove($cClients.Find(hS))
-
+  Try $cSubscribersDeviceUpdate.Remove(iIndex)
+  
   If $bDebug Then WriteDebugLog("Client removed. Total " & $cClients.Count & " client(s) connected.")
 
   ' Remove hooks to:
@@ -3255,6 +3261,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_Subscribe_DeviceUpdate()
 
+  Dim iIndex As Integer
+  iIndex = $cClients.Find(hS)
+  
+  If iIndex Then
+    $cSubscribersDeviceUpdate[iIndex] = True
+	WriteDebugLog("Client subscribed for Device Updates.")
+  Else
+	WriteDebugLog("Client session not found. Subscribe for Device Updates failed!")
+  Endif
   SetReply(0, True)
 
 End
@@ -3266,8 +3281,65 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Subscribe_DeviceUpdate(cData As JSONCollection)
 
-  'hJSONRPC.DeviceUpdate(cData)
+  Dim iIdx As Integer
+  Dim bSubscriberDeviceUpdate As Boolean
+  Dim oSubscriberSession As Object
+
   If cData Then
+    If $cSubscribersDeviceUpdate.Count >= 1 Then
+      For Each bSubscriberDeviceUpdate in $cSubscribersDeviceUpdate
+        If bSubscriberDeviceUpdate Then
+	      'Check if connection is alive
+		  oSubscriberSession = $cClients[$cSubscribersDeviceUpdate.key]
+          oSubscriberSession.Begin()
+          oSubscriberSession.Print(cData)
+          oSubscriberSession.Send()
+	    End If
+      Next
+    End If
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' This routine will be called form devices module when a device value is updated
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendUpdateForDevice(iDeviceId As Integer, iValueNum As Integer)
+
+  Dim iIdx As Integer
+  Dim rResult As Result
+  Dim bSubscribersExists As Boolean = False
+  Dim bSubscriberDeviceUpdate As Boolean
+  Dim cMapField As New Collection
+  Dim aValue As New Collection[]
+  Dim cValue As JSONCollection
+  Dim aFields As String[]
+
+  If $cSubscribersDeviceUpdate.Count >= 1 Then
+    For Each bSubscriberDeviceUpdate in $cSubscribersDeviceUpdate.Count
+      If bSubscriberDeviceUpdate Then
+		bSubscribersExists = True
+		Exit For
+	  Endif
+	Next
+  Endif
+
+  If bSubscribersExists Then
+	If $bDebug Then Main.WriteDebugLog(LogLabel & "Send device update notification to active client(s) subscribed for Device Updates.")
+    ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
+    cMapField.Add("value", "rawvalue")
+    cMapField.Add("NA", "value")
+    rResult = Devices.GetValues(["device_id": iDeviceId, "valuenum": iValueNum)
+    cValue = New JSONCollection
+    If rResult And If rResult.Available Then
+      For Each rResult
+        FilterFields(Type_Data_DeviceValue, aFields, rResult, cMapField, cValue)
+        Break
+      Next
+    Endif
+    Subscribe_DeviceUpdate(cValue)
+  Else
+	If $bDebug Then Main.WriteDebugLog(LogLabel & "Skip device update notification. No active client subscribed for Device Updates.")
   Endif
 
 End

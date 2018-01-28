@@ -1006,6 +1006,10 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
         If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
           Try Plugin.GetPluginObject("SmartVisuServer", 1).Interface.SendUpdateForDevice(sName, CorrectValue(vValue, sCorrection, iDeviceId), IIf(sType, sType, "value" & iValueNum))
         Endif
+		
+		If Plugin.IsPluginEnabled("JSONRPC", 0) Then
+          Try Plugin.GetPluginObject("JSONRPC", 1).Interface.SendUpdateForDevice(iDeviceId, iValueNum)
+		Endif
       Endif
     Endif
   Endif
