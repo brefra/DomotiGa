@@ -30,6 +30,7 @@ Public sSettings As String = "domotiga.conf"
 Public bExitProgram As Boolean ' exit program flag
 Public sStartpage As String
 Public sLanguage As String
+Public bAllowAutoUpgrade As Boolean = False
 Public sAppLanguage As String
 Public iWindowX As Integer
 Public iWindowY As Integer
@@ -52,6 +53,9 @@ Public aIPAddr As New String[]
 ' JSON-RPC settings
 Public sJSONRPCHost As String
 Public iJSONRPCPort As Integer
+Public sJSONRPCUser As String
+Public sJSONRPCPassword As String
+Public sJSONRPCSSL As String
 
 ' Debug
 Public bMainDebug As Boolean
@@ -73,6 +77,10 @@ Public sDebugSocket As New String[]
 
 ' Debug the start-up sequence, sometimes it can happen we hang on 60%
 Public bDebugStartUp As Boolean
+
+' Environment variables past to the application
+' The 'MySQL_Host' is converted to 'MYSQL/HOST"
+Public cEnvVar As New Collection
 
 ' Login
 Public bAuthEnabled As Boolean
@@ -119,6 +127,8 @@ Public sSQLPass As String
 Public iSQLPort As Integer
 Public sSQLDatabase As String
 Public bSQLDebug As Boolean
+Public bSQLInitialized As Boolean
+Public sSQLConnError As String
 Public hDB As New Connection
 
 ' Sound
@@ -311,9 +321,13 @@ Private Sub ParseArgs()
         Print
         Print "Options:"
         Print " -h              display this help"
+        Print " -a              allow automatic upgrade"
         Print " -c <configfile> specify config file"
         Print
         Quit
+      Else If sArg = "-a" Then
+        ' allow automatic database upgrade
+        bAllowAutoUpgrade = True
       Else If Left(sArg, 2) = "-c" Then
         ' run with specified config file
         If Len(sArg) > 2 Then
@@ -357,6 +371,8 @@ Private Sub ParseEnvVars()
         Next
       Case "DEBUG_STARTUP" ' Debug startup of DomotiGa, sometimes we hang ...
         bDebugStartUp = True
+      Default ' Store other environment variables for later usage. e.g. overrule MySQL Host
+        cEnvVar[Replace$(UCase(sEnv), "_", "/")] = Application.Env[sEnv]
     End Select
   Next
 
@@ -400,6 +416,8 @@ Public Sub ConnectDatabase(Optional bFirstTime As Boolean = False) As Boolean
 
   Dim sVersion As String
 
+  sSQLConnError = ""
+
   ' try to close the connection first
   Try hDB.Close
 
@@ -418,6 +436,9 @@ Public Sub ConnectDatabase(Optional bFirstTime As Boolean = False) As Boolean
 
   ' Handle errors
   If Error Then
+    ' Store error text for later processing
+    sSQLConnError = Error.Text
+    ' For first attempt, don't report the attempt as an error
     If InStr(Error.Text, "Cannot open database") = 0 Or If Not bFirstTime Then
       Main.WriteLog("[MySQL] ERROR: " & Error.Text)
     Endif
@@ -434,6 +455,9 @@ Public Sub ConnectDatabase(Optional bFirstTime As Boolean = False) As Boolean
   Else
     WriteLog("[MySQL] Version is " & hDB.Version & ".")
   Endif
+
+  ' We can set initialized to true, just to be sure
+  If Not Main.bSQLInitialized Then Main.bSQLInitialized = True
 
   ' all ok
   Return True
@@ -499,7 +523,7 @@ Public Sub DisplayProgramInfo()
   WriteLog("[Main] Server uptime is " & Left$(Replace$(sUptime, "  ", " "), -1))
   WriteLog("[Main] This DomotiGa instance is running in " & IIf(bServer, "server", "client") & " mode.")
   If Not bServer Then
-    WriteLog("[Main] The JSON-RPC server URL is 'http://" & sJSONRPCHost & ":" & iJSONRPCPort & "/'")
+    WriteLog("[Main] The JSON-RPC server URL is '" & IIf(sJSONRPCSSL = "True", "https", "http") & "://" & sJSONRPCHost & ":" & iJSONRPCPort & "/'")
   Endif
 
   ' If we detect another instance running, report it now
@@ -556,12 +580,17 @@ Private Sub GetConfigValue(sKey As String, Optional vValue As Variant) As Varian
 
   Dim hSettings As Settings
 
-  hSettings = New Settings(sBaseDir &/ sSettings)
-
-  If Not IsNull(vValue) Then
-    Return hSettings[sKey, vValue]
+  ' First try to get it from our environment variable list
+  If cEnvVar.Exist(UCase(sKey)) Then
+    Return cEnvVar[UCase(sKey)]
   Else
-    Return hSettings[sKey]
+    hSettings = New Settings(sBaseDir &/ sSettings)
+
+    If Not IsNull(vValue) Then
+      Return hSettings[sKey, vValue]
+    Else
+      Return hSettings[sKey]
+    Endif
   Endif
 
 End
@@ -579,10 +608,14 @@ Public Sub SetConfig()
   hSettings["MySQL/User"] = sSQLUser
   hSettings["MySQL/Password"] = sSQLPass
   hSettings["MySQL/Database"] = sSQLDatabase
+  hSettings["MySQL/Initialized"] = bSQLInitialized
   hSettings["Program/Language"] = sLanguage
   hSettings["Program/Mode"] = IIf(bServerCurrent, "server", "client")
   hSettings["JSONRPC/Host"] = sJSONRPCHost
   hSettings["JSONRPC/Port"] = iJSONRPCPort
+  hSettings["JSONRPC/User"] = sJSONRPCUser
+  hSettings["JSONRPC/Password"] = sJSONRPCPassword
+  hSettings["JSONRPC/SSL"] = sJSONRPCSSL
   hSettings["Graphs/Url"] = sGraphsUrl
 
   Try hSettings.Save
@@ -609,6 +642,7 @@ Public Sub GetConfig()
     hSettings["MySQL/User"] = "domouser"
     hSettings["MySQL/Password"] = "kung-fu"
     hSettings["MySQL/Database"] = "domotiga"
+    hSettings["MySQL/Initialized"] = False
     hSettings["Program/Language"] = "en_US.UTF-8"
     hSettings["Program/Mode"] = "server"
     hSettings["JSONRPC/Host"] = "localhost"
@@ -633,6 +667,7 @@ Public Sub GetConfig()
     sSQLUser = GetConfigValue("MySQL/User", "domouser")
     sSQLPass = GetConfigValue("MySQL/Password", "kung-fu")
     sSQLDatabase = GetConfigValue("MySQL/Database", "domotiga")
+    bSQLInitialized = GetConfigValue("MySQL/Initialized", False)
     sLanguage = GetConfigValue("Program/Language", "en_US.UTF-8")
     sMode = GetConfigValue("Program/Mode", "server")
 
@@ -648,13 +683,20 @@ Public Sub GetConfig()
 
     sJSONRPCHost = GetConfigValue("JSONRPC/Host", "localhost")
     iJSONRPCPort = GetConfigValue("JSONRPC/Port", "9090")
+    sJSONRPCUser = GetConfigValue("JSONRPC/User", "")
+    sJSONRPCPassword = GetConfigValue("JSONRPC/Password", "")
+    sJSONRPCSSL = GetConfigValue("JSONRPC/Ssl", "False")
+    If sJSONRPCSSL = "T" Then sJSONRPCSSL = "True"
+
     iWindowX = GetConfigValue("GUI/WindowX", 175)
     iWindowY = GetConfigValue("GUI/WindowY", 43)
     iWindowHeight = GetConfigValue("GUI/WindowHeight", 613)
     iWindowWidth = GetConfigValue("GUI/WindowWidth", 999)
     sGraphsUrl = GetConfigValue("Graphs/Url", "http://localhost/graphs/")
 
-    Client.$sURL = "http://" & sJSONRPCHost & ":" & iJSONRPCPort
+    Client.$sURL = IIf(sJSONRPCSSL = "True", "https", "http") & "://" & sJSONRPCHost & ":" & iJSONRPCPort
+    Client.$sUser = sJSONRPCUser
+    Client.$sPassword = sJSONRPCPassword
   Endif
 
 End
@@ -2485,26 +2527,30 @@ Private Sub CheckDatabaseVersion()
   iPrgVersion = Val(Replace(sPrgVersion, ".", ""))
 
   ' fetch database version from database
-  rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1 ")
+  rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1")
   If rResult.Count = 1 Then
     sDBVersion = Str(rResult!db)
     ' convert 0.1.180 to 01180
     iDBVersion = Val(Replace(sDBVersion, ".", ""))
+
     If iDBVersion < iPrgVersion Then
-    Repeat
-      Select Case Message.Error(("The version of your database is ") & sDBVersion & (" but the\nversion of the program you want to run is ") & sPrgVersion & ("!\n\nDo you want to upgrade your database?"), ("Yes"), ("No"), ("Quit"))
-        Case 1 ' yes
-          FToolsDatabaseAdmin.BackupDatabase()
+
+      If bAllowAutoUpgrade Then
+
+        WriteLog("[Main] The version of your database is " & sDBVersion & " but the version of the program is " & sPrgVersion & ("!"))
+
+        ' Do automatic upgrade
+        Repeat
           If Util.ProgramExist("mysql") Then
             sToVersion = Format(Str(iDBVersion + 1), "00000")
             ' make the jump to version 1.0.000
             If sToVersion = "01210" Then sToVersion = "10000"
             sDumpFile = "upgrade/" & Replace(sDBVersion, ".", "") & "to" & sToVersion & ".sql"
             If Exist(sBaseDir &/ sDumpFile) Then
-              hMysql = Shell "mysql --host=" & sSQLHost & " --port=" & iSQLport & " --user=" & sSQLUser & " --password=" & sSQLPass & " --database=" & sSQLDatabase & " --execute='SOURCE " & sBaseDir &/ sDumpFile & "'" Wait
+              hMysql = Shell "mysql --host=" & sSQLHost & " --user=" & sSQLUser & " --password=" & sSQLPass & " --database=" & sSQLDatabase & " --execute='SOURCE " & sBaseDir &/ sDumpFile & "'" Wait
               If hMysql.Value Then ' mysql returned an error
-                Message.Error(("Mysql command returned an error!\nThe database is now at version ") & sDBVersion)
-                Return
+                WriteLog("MySQL command returned an error! The database is now at version " & sDBVersion)
+                Quit
               Else
                 ' check if we are there yet
                 rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1")
@@ -2515,20 +2561,62 @@ Private Sub CheckDatabaseVersion()
                 Endif
               Endif
             Else
-              Message.Error(("Couldn't find upgrade file ") & sDumpFile & ("\nDatabase is now at version ") & sDBVersion)
-              Return
+              WriteLog("Couldn't find upgrade file " & sDumpFile & "! The Database is now at version " & sDBVersion)
+              Quit
             Endif
-            Message.Info(("Database has been upgraded to version ") & sDBVersion)
+            WriteLog("[Main] Database has been upgraded to version " & sDBVersion)
             If iPrgVersion = iDBVersion Then Return
           Else
-            Message.Error(("Couldn't find mysql program!"))
+            WriteLog("Couldn't find MySQL program!")
+            Quit
           Endif
-        Case 2 ' no
-          Return
-        Case 3 ' quit
-          Quit
-      End Select
-      Until iPrgVersion = iDBVersion
+        Until iPrgVersion = iDBVersion
+
+      Else
+
+        ' Do manual upgrade
+        Repeat
+          Select Case Message.Error(("The version of your database is ") & sDBVersion & (" but the\nversion of the program you want to run is ") & sPrgVersion & ("!\n\nDo you want to upgrade your database?"), ("Yes"), ("No"), ("Quit"))
+            Case 1 ' yes
+              FToolsDatabaseAdmin.BackupDatabase()
+              If Util.ProgramExist("mysql") Then
+                sToVersion = Format(Str(iDBVersion + 1), "00000")
+                ' make the jump to version 1.0.000
+                If sToVersion = "01210" Then sToVersion = "10000"
+                sDumpFile = "upgrade/" & Replace(sDBVersion, ".", "") & "to" & sToVersion & ".sql"
+                If Exist(sBaseDir &/ sDumpFile) Then
+                  hMysql = Shell "mysql --host=" & sSQLHost & " --port=" & iSQLport & " --user=" & sSQLUser & " --password=" & sSQLPass & " --database=" & sSQLDatabase & " --execute='SOURCE " & sBaseDir &/ sDumpFile & "'" Wait
+                  If hMysql.Value Then ' mysql returned an error
+                    Message.Error(("Mysql command returned an error!\nThe database is now at version ") & sDBVersion)
+                    Return
+                  Else
+                    ' check if we are there yet
+                    rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1")
+                    If rResult.Count = 1 Then
+                      sDBVersion = Str(rResult!db)
+                      ' convert 0.1.180 to 01180
+                      iDBVersion = Val(Replace(sDBVersion, ".", ""))
+                    Endif
+                  Endif
+                Else
+                  Message.Error(("Couldn't find upgrade file ") & sDumpFile & ("\nDatabase is now at version ") & sDBVersion)
+                  Return
+                Endif
+                Message.Info(("Database has been upgraded to version ") & sDBVersion)
+                If iPrgVersion = iDBVersion Then Return
+              Else
+                Message.Error(("Couldn't find MySQL program!"))
+                Quit
+              Endif
+            Case 2 ' no
+              Return
+            Case 3 ' quit
+              Quit
+          End Select
+        Until iPrgVersion = iDBVersion
+
+      Endif
+
     Else If iDBVersion > iPrgVersion Then
       Message.Error(("The version of your database is ") & sDBVersion & (" but the\nversion of the program you want to run is ") & sPrgVersion & "?!")
     Endif

@@ -40,6 +40,10 @@ Public sOtherServer As String
 Public aBroadcastAddr As New String[]
 Public aIPAddr As New String[]
 
+' JSON-RPC settings
+Public sJSONRPCUser As String
+Public sJSONRPCPassword As String
+
 ' Debug
 Public bMainDebug As Boolean
 Public bEventsDebug As Boolean
@@ -60,6 +64,10 @@ Public sDebugSocket As New String[]
 
 ' Debug the start-up sequence, sometimes it can happen we hang on 60%
 Public bDebugStartUp As Boolean
+
+' Environment variables past to the application
+' The 'MySQL_Host' is converted to 'MYSQL/HOST"
+Public cEnvVar As New Collection
 
 ' Message counters
 Public iNewMails As Integer
@@ -437,6 +445,8 @@ Private Sub ParseEnvVars()
         Next
       Case "DEBUG_STARTUP" ' Debug startup of DomotiGa, sometimes we hang ...
         bDebugStartUp = True
+      Default ' Store other environment variables for later usage. e.g. overrule MySQL Host
+        cEnvVar[Replace$(UCase(sEnv), "_", "/")] = Application.Env[sEnv]
     End Select
   Next
 
@@ -596,6 +606,8 @@ Public Sub SetConfig()
   hSettings["MySQL/Password"] = sSQLPass
   hSettings["MySQL/Database"] = sSQLDatabase
   hSettings["Program/Language"] = sLanguage
+  hSettings["JSONRPC/User"] = sJSONRPCUser
+  hSettings["JSONRPC/Password"] = sJSONRPCPassword
 
   Try hSettings.Save
   If Error Then
@@ -638,6 +650,9 @@ Public Sub GetConfig()
     sSQLPass = GetConfigValue("MySQL/Password", "kung-fu")
     sSQLDatabase = GetConfigValue("MySQL/Database", "domotiga")
     sLanguage = GetConfigValue("Program/Language", "en_US.UTF-8")
+
+    sJSONRPCUser = GetConfigValue("JSONRPC/User", "")
+    sJSONRPCPassword = GetConfigValue("JSONRPC/Password", "")
   Endif
 
 End
@@ -773,12 +788,17 @@ Private Function GetConfigValue(sKey As String, Optional vValue As Variant) As V
 
   Dim hSettings As Settings
 
-  hSettings = New Settings(sBaseDir &/ sSettings)
-
-  If Not IsNull(vValue) Then
-    Return hSettings[sKey, vValue]
+  ' First try to get it from our environment variable list
+  If cEnvVar.Exist(UCase(sKey)) Then
+    Return cEnvVar[UCase(sKey)]
   Else
-    Return hSettings[sKey]
+    hSettings = New Settings(sBaseDir &/ sSettings)
+
+    If Not IsNull(vValue) Then
+      Return hSettings[sKey, vValue]
+    Else
+      Return hSettings[sKey]
+    Endif
   Endif
 
 End

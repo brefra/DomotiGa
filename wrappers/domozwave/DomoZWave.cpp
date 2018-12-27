@@ -39,9 +39,6 @@ char domozwave_vers[] = "DomoZWave version 2.20";
 #include <map>
 #include <semaphore.h>
 
-// json-rpc
-#include <json/json.h>
-
 // curl
 #include <curl/curl.h>
 
@@ -200,6 +197,8 @@ typedef struct {
 } StructJsonRpcInfo;
 
 list<StructJsonRpcInfo> m_JsonRpcInfo;
+
+char jsonData[32768];
 
 ///////////////////////////////////////////////////////////////////////////////
 // NodeInfo Functions for Open Z-Wave
@@ -4498,12 +4497,10 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 	int int_value;
 	int16 short_value;
 	int32 count;
+	string config;
+	char value[50];
 
-	// Create json objects for the node
-	json_object *jnode = json_object_new_object();
-	json_object *jconfig = json_object_new_object();
-	json_object *jarray = json_object_new_array();
-	json_object *jvalue;
+	// {"node_id": 2, "count": 99, "config": [{"label": "", "type": "bool", "value": ..., "cached": true, "expiry": 1234, "help": "", "readonly": true, "writeonly": true},{...}]}
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfig" ) == false ) return "";
 
@@ -4513,8 +4510,7 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 	{
 		count = 0;
 
-		jnode = json_object_new_object();
-		jarray = json_object_new_array();
+		config = "[";
 
 		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
 		{
@@ -4524,6 +4520,11 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 			if ( ( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ) )
 			{
 				count++;
+
+				if ( config.compare("[") != 0 )
+				{
+					config.append(", ");
+				}
 
 				// Check for cached items
 				m_configItem* cachedconfig;
@@ -4542,191 +4543,194 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					cachedconfig = NULL;
 				}
 
-				jconfig = json_object_new_object();
-
 				// Add index to the node config item
-				json_object *jint = json_object_new_int( v.GetIndex() );
-				json_object_object_add( jconfig, "index", jint );
+				snprintf( value, sizeof(value), "%d", v.GetIndex() );
+				config.append("{\"index\": " + std::string(value));
 
 				// Add label
 				str = Manager::Get()->GetValueLabel( v );
-				jvalue = json_object_new_string( str.c_str() );
-				json_object_object_add( jconfig, "label", jvalue );
+				config.append(", \"label\": \"" + str + "\"");
 
 				// Add type, value and possible list entries
 				switch ( v.GetType() )
 				{
 					case ValueID::ValueType_Bool:
 					{
-						jvalue = json_object_new_string( "bool" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"bool\"");
 
 						if ( cachedconfig == NULL )
 						{
 							Manager::Get()->GetValueAsBool( v, &bool_value );
-							jvalue = json_object_new_boolean( bool_value );
+							if ( bool_value )
+							{
+								config.append(", \"value\": true");
+							}
+							else
+							{
+								config.append(", \"value\": false");
+							}
 						}
 						else
 						{
 							if ( cachedconfig->m_valuenumeric == 0 )
 							{
-								jvalue = json_object_new_boolean( false );
+								config.append(", \"value\": false");
 							}
 							else
 							{
-								jvalue = json_object_new_boolean( true );
+								config.append(", \"value\": true");
 							}
 						}
-						json_object_object_add( jconfig, "value", jvalue );
 						break;
 					}
 					case ValueID::ValueType_Byte:
 					{
-						jvalue = json_object_new_string( "byte" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"byte\"");
 
 						if ( cachedconfig == NULL )
 						{
 							Manager::Get()->GetValueAsByte( v, &byte_value );
-							jvalue = json_object_new_int( byte_value );
+							snprintf( value, sizeof(value), "%d", byte_value );
+							config.append(", \"value\": " + std::string(value));
 						}
 						else
 						{
-							jvalue = json_object_new_int( cachedconfig->m_valuenumeric );
+							snprintf( value, sizeof(value), "%d", cachedconfig->m_valuenumeric );
+							config.append(", \"value\": " + std::string(value));
 						}
-						json_object_object_add( jconfig, "value", jvalue );
 
 						byte_value = Manager::Get()->GetValueMin( v );
-						jvalue = json_object_new_int( byte_value );
-						json_object_object_add( jconfig, "min", jvalue );
+						snprintf( value, sizeof(value), "%d", byte_value );
+						config.append(", \"min\": " + std::string(value));
 						byte_value = Manager::Get()->GetValueMax( v );
-						jvalue = json_object_new_int( byte_value );
-						json_object_object_add( jconfig, "max", jvalue );
+						snprintf( value, sizeof(value), "%d", byte_value );
+						config.append(", \"max\": " + std::string(value));
 						break;
 					}
 					case ValueID::ValueType_Decimal:
 					{
-						jvalue = json_object_new_string( "decimal" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"decimal\"");
+
 						Manager::Get()->GetValueAsFloat( v, &float_value );
-						jvalue = json_object_new_double( float_value );
-						json_object_object_add( jconfig, "value", jvalue );
+						snprintf( value, sizeof(value), "%f", float_value );
+						config.append(", \"value\": " + std::string(value));
 						break;
 					}
 					case ValueID::ValueType_Int:
 					{
-						jvalue = json_object_new_string( "int" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"int\"");
 
 						if ( cachedconfig == NULL )
 						{
 							Manager::Get()->GetValueAsInt( v, &int_value );
-							jvalue = json_object_new_int( int_value );
+							snprintf( value, sizeof(value), "%d", int_value );
+							config.append(", \"value\": " + std::string(value));
 						}
 						else
 						{
-							jvalue = json_object_new_int( cachedconfig->m_valuenumeric );
+							snprintf( value, sizeof(value), "%d", cachedconfig->m_valuenumeric );
+							config.append(", \"value\": " + std::string(value));
 						}
-						json_object_object_add( jconfig, "value", jvalue );
 
 						int_value = Manager::Get()->GetValueMin( v );
-						jvalue = json_object_new_int( int_value );
-						json_object_object_add( jconfig, "min", jvalue );
+						snprintf( value, sizeof(value), "%d", int_value );
+						config.append(", \"min\": " + std::string(value));
 						int_value = Manager::Get()->GetValueMax( v );
-						jvalue = json_object_new_int( int_value );
-						json_object_object_add( jconfig, "max", jvalue );
+						snprintf( value, sizeof(value), "%d", int_value );
+						config.append(", \"max\": " + std::string(value));
 						break;
 					}
 					case ValueID::ValueType_Short:
 					{
-						jvalue = json_object_new_string( "short" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"short\"");
 
 						if ( cachedconfig == NULL )
 						{
 							Manager::Get()->GetValueAsShort( v, &short_value );
-							jvalue = json_object_new_int( short_value );
+							snprintf( value, sizeof(value), "%d", short_value );
+							config.append(", \"value\": " + std::string(value));
 						}
 						else
 						{
-							jvalue = json_object_new_int( cachedconfig->m_valuenumeric );
+							snprintf( value, sizeof(value), "%d", cachedconfig->m_valuenumeric );
+							config.append(", \"value\": " + std::string(value));
 						}
-						json_object_object_add( jconfig, "value", jvalue );
 
 						short_value = Manager::Get()->GetValueMin( v );
-						jvalue = json_object_new_int( short_value );
-						json_object_object_add( jconfig, "min", jvalue );
+						snprintf( value, sizeof(value), "%d", short_value );
+						config.append(", \"min\": " + std::string(value));
 						short_value = Manager::Get()->GetValueMax( v );
-						jvalue = json_object_new_int( short_value );
-						json_object_object_add( jconfig, "max", jvalue );
+						snprintf( value, sizeof(value), "%d", short_value );
+						config.append(", \"max\": " + std::string(value));
 						break;
 					}
 					case ValueID::ValueType_Schedule:
 					{
-						jvalue = json_object_new_string( "schedule" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"schedule\"");
 						break;
 					}
 					case ValueID::ValueType_String:
 					{
-						jvalue = json_object_new_string( "string" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"string\"");
 
 						if ( cachedconfig == NULL )
 						{
 							Manager::Get()->GetValueAsString( v, &string_value );
-							jvalue = json_object_new_string( string_value.c_str() );
+							config.append(", \"value\": \"" + string_value + "\"");
 						}
 						else
 						{
-							jvalue = json_object_new_string( cachedconfig->m_valuestring.c_str() );
+							config.append(", \"value\": \"" + cachedconfig->m_valuestring + "\"");
 						}
-						json_object_object_add( jconfig, "value", jvalue );
 						break;
 					}
 					case ValueID::ValueType_Button:
 					{
-						jvalue = json_object_new_string( "button" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"button\"");
 						break;
 					}
 					case ValueID::ValueType_List:
 					{
-						jvalue = json_object_new_string( "list" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"list\"");
 
 						if ( cachedconfig == NULL )
 						{
 							Manager::Get()->GetValueListSelection( v, &list_value );
-							jvalue = json_object_new_string( list_value.c_str() );
+							config.append(", \"value\": \"" + list_value + "\"");
 						}
 						else
 						{
-							jvalue = json_object_new_string( cachedconfig->m_valuestring.c_str() );
+							config.append(", \"value\": \"" + cachedconfig->m_valuestring + "\"");
 						}
-						json_object_object_add( jconfig, "value", jvalue );
 
-						json_object *jarraylist = json_object_new_array();
 						vector<string> strs;
 						string str;
+
+						string configlist;
+						configlist = "[";
 
 						Manager::Get()->GetValueListItems( v, &strs );
 
 						for (vector<string>::iterator it = strs.begin(); it != strs.end(); it++)
 						{
 							str = (*it);
-							jvalue = json_object_new_string( str.c_str() );
-							json_object_array_add(jarraylist, jvalue );
+
+							if ( configlist.compare("[") != 0 )
+							{
+								configlist.append(", ");
+							}
+
+							configlist.append("\"" + str + "\"");
 						}
 
-						json_object_object_add( jconfig, "list", jarraylist );
+						configlist.append("]");
+						config.append(", \"list\": " + configlist);
 
 						break;
 					}
 					default:
 					{
-						jvalue = json_object_new_string( "none" );
-						json_object_object_add( jconfig, "type", jvalue );
+						config.append(", \"type\": \"none\"");
 						break;
 					}
 				}
@@ -4734,8 +4738,7 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 				// Add cachedconfig information
 				if ( cachedconfig == NULL )
 				{
-					jvalue = json_object_new_boolean( false );
-					json_object_object_add( jconfig, "cached", jvalue );
+					config.append(", \"cached\": false");
 				}
 				else
 				{
@@ -4743,43 +4746,49 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					seconds = difftime( time( NULL ), cachedconfig->m_expiretime );
 					seconds = -seconds;
 
-					jvalue = json_object_new_boolean( true );
-					json_object_object_add( jconfig, "cached", jvalue );
-					jvalue = json_object_new_int( seconds );
-					json_object_object_add( jconfig, "expiry", jvalue );
+					config.append(", \"cached\": true");
+					snprintf( value, sizeof(value), "%d", seconds );
+					config.append(", \"expiry\": " + std::string(value));
 				}	
 
 				// Add help to the node config item
 				str = Manager::Get()->GetValueHelp( v );
-				jvalue = json_object_new_string( str.c_str() );
-				json_object_object_add( jconfig, "help", jvalue );
+				config.append(", \"help\": \"" + EscapeJsonString(str) + "\"");
 
+				// Read only values
 				bool_value = Manager::Get()->IsValueReadOnly( v );
-				jvalue = json_object_new_boolean( bool_value );
-				json_object_object_add( jconfig, "readonly", jvalue );
+				if ( bool_value )
+				{
+					config.append(", \"readonly\": true");
+				}
+				else
+				{
+					config.append(", \"readonly\": false");
+				}
 
 				// Also report the writonly, required to know if the value is useable or not
 				bool_value = Manager::Get()->IsValueWriteOnly( v );
-				jvalue = json_object_new_boolean( bool_value );
-				json_object_object_add( jconfig, "writeonly", jvalue );
+				if ( bool_value )
+				{
+					config.append(", \"writeonly\": true}");
+				}
+				else
+				{
+					config.append(", \"writeonly\": false}");
+				}
 
-				json_object_array_add( jarray, jconfig );
 			}
 
 		}
 
-		jvalue = json_object_new_int( nodeInfo->m_nodeId );
-		json_object_object_add( jnode, "node_id", jvalue );
-		jvalue = json_object_new_int( count );
-		json_object_object_add( jnode, "count", jvalue );
-		json_object_object_add( jnode, "config", jarray );
+		config.append("]");
 
-		return json_object_to_json_string( jnode );
-
+		snprintf( jsonData, sizeof(jsonData), "{\"node_id\": %d, \"count\": %d, \"config\": %s}", nodeInfo->m_nodeId, count, config.c_str() );
+		return jsonData;
 	}
 
 	WriteLog( LogLevel_Debug, false, "Config=None (node doesn't exist)" );
-	return json_object_to_json_string( jnode );
+	return "{}";
 }
 
 //-----------------------------------------------------------------------------
@@ -4890,12 +4899,11 @@ const char* DomoZWave_GetNodeCommandClassList( uint32 home, int32 node, int32 in
 const char* DomoZWave_GetNodeGroup( uint32 home, int32 node )
 {
 	uint32 count;
+	string group;
+	string association;
+	char value[50];
 
-	// Create json objects for the node
-	json_object *jnode = json_object_new_object();
-	json_object *jgroup = json_object_new_object();
-	json_object *jarray = json_object_new_array();
-	json_object *jvalue;
+	// {"node_id": 2, "count": 99, "group": [{"group": 1, "label": "", "association": [1, 2, 3]}, {...}] }
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeGroup" ) == false ) return "";
 
@@ -4903,53 +4911,57 @@ const char* DomoZWave_GetNodeGroup( uint32 home, int32 node )
 
 	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
-		jnode = json_object_new_object();
-		jarray = json_object_new_array();
-
 		count = Manager::Get()->GetNumGroups( home, node );
+
+		group = "[";
 
 		for( uint32 i=1; i<=count; ++i )
 		{
-			jgroup = json_object_new_object();
+			if ( group.compare("[") != 0 )
+			{
+				group.append(", ");
+			}
 
-			jvalue = json_object_new_int( i );
-			json_object_object_add( jgroup, "group", jvalue );
+			snprintf( value, sizeof(value), "%d", i );
+			group.append("{\"group\": " + std::string(value));
 
 			uint32 max = Manager::Get()->GetMaxAssociations(home, node, i );
-			jvalue = json_object_new_int( max );
-			json_object_object_add( jgroup, "max", jvalue );
+			snprintf( value, sizeof(value), "%d", max );
+			group.append(", \"max\": " + std::string(value));
 
 			string str = Manager::Get()->GetGroupLabel(home, node, i );
-			jvalue = json_object_new_string( str.c_str() );
-			json_object_object_add( jgroup, "label", jvalue );
+			group.append(", \"label\": \"" + str + "\"");
 
 			uint8 *associations;
 			uint32 numAssociations = Manager::Get()->GetAssociations(home, node, i, &associations );
 
-			json_object *jarrayassoc = json_object_new_array();
+			association = "[";
 
 			for( uint32 j=0; j<numAssociations; ++j )
 			{
-				jvalue = json_object_new_int( associations[j] );
-				json_object_array_add( jarrayassoc, jvalue );
+				if ( association.compare("[") != 0 )
+				{
+					association.append(", ");
+				}
+
+				snprintf( value, sizeof(value), "%d", associations[j] );
+				association.append(std::string(value));
 			}
 
-			json_object_object_add( jgroup, "association", jarrayassoc );
-			json_object_array_add( jarray, jgroup );
+			association.append("]");
+			group.append(", \"association\": " + association + "}");
 		}
 
-		jvalue = json_object_new_int( nodeInfo->m_nodeId );
-		json_object_object_add( jnode, "node_id", jvalue );
-		jvalue = json_object_new_int( count );
-		json_object_object_add( jnode, "count", jvalue );
-		json_object_object_add( jnode, "group", jarray );
+		group.append("]");
 
-		return json_object_to_json_string( jnode );
+		snprintf( jsonData, sizeof(jsonData), "{\"node_id\": %d, \"count\": %d, \"group\": %s}", nodeInfo->m_nodeId, count, group.c_str() );
+		return jsonData;
 
 	}
 
 	WriteLog( LogLevel_Debug, false, "Group=None (node doesn't exist)" );
-	return json_object_to_json_string( jnode );
+	return "{}";
+
 }
 
 //-----------------------------------------------------------------------------
@@ -4995,12 +5007,10 @@ void DomoZWave_RemoveAssociation( uint32 home, int32 node, int32 group, int32 ot
 const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node )
 {
 	uint32 count;
+	string usercode;
+	char value[50];
 
-	// Create json objects for the node
-	json_object *jnode = json_object_new_object();
-	json_object *jusercode = json_object_new_object();
-	json_object *jarray = json_object_new_array();
-	json_object *jvalue;
+	// {"node_id": 2, "count": 99, "usercode:" [{"label": "", "value": ""}, {...}]}
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeUserCode" ) == false ) return "";
 
@@ -5008,10 +5018,9 @@ const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node )
 
 	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
-		jnode = json_object_new_object();
-		jarray = json_object_new_array();
-
 		count = 0;
+
+		usercode = "[";
 
 		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
 		{
@@ -5020,21 +5029,22 @@ const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node )
 			// Find the usercode items of this node
 			if (( v.GetCommandClassId() == COMMAND_CLASS_USER_CODE ) && ( v.GetGenre() == ValueID::ValueGenre_User ) && ( v.GetInstance() == 1 ))
 			{
-				jusercode = json_object_new_object();
+				if ( usercode.compare("[") != 0 )
+				{
+					usercode.append(", ");
+				}
 
-				jvalue = json_object_new_int( v.GetIndex() );
-				json_object_object_add( jusercode, "usercode", jvalue );
+				snprintf( value, sizeof(value), "%d", v.GetIndex() );
+				usercode.append("{\"usercode\": " + std::string(value));
 
 				string str = Manager::Get()->GetValueLabel( v );
-				jvalue = json_object_new_string( str.c_str() );
-				json_object_object_add( jusercode, "label", jvalue );
+				usercode.append(", \"label\": \"" + str + "\"");
 
 				if ( v.GetType() == ValueID::ValueType_Raw )
 				{
 					string string_value;
 					Manager::Get()->GetValueAsString( v, &string_value );
-					jvalue = json_object_new_string( string_value.c_str() );
-					json_object_object_add( jusercode, "value", jvalue );
+					usercode.append(", \"value\": " + string_value);
 				}
 				else
 				{
@@ -5047,23 +5057,19 @@ const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node )
 					count = v.GetIndex();
 				}
 
-				json_object_array_add( jarray, jusercode );
+				usercode.append("}");
 			}
 
 		}
 
-		jvalue = json_object_new_int( nodeInfo->m_nodeId );
-		json_object_object_add( jnode, "node_id", jvalue );
-		jvalue = json_object_new_int( count );
-		json_object_object_add( jnode, "count", jvalue );
-		json_object_object_add( jnode, "usercode", jarray );
+                usercode.append("]");
 
-		return json_object_to_json_string( jnode );
-
+		snprintf( jsonData, sizeof(jsonData), "{\"node_id\": %d, \"count\": %d, \"usercode\": %s}", nodeInfo->m_nodeId, count, usercode.c_str() );
+		return jsonData;
 	}
 
 	WriteLog( LogLevel_Debug, false, "UserCode=None (node doesn't exist)" );
-	return json_object_to_json_string( jnode );
+	return "{}";
 }
 
 //-----------------------------------------------------------------------------
@@ -5860,49 +5866,9 @@ const char* DomoZWave_GetDriverStatistics( uint32 home )
 	Driver::DriverData data;
 	Manager::Get()->GetDriverStatistics( home, &data );
 
-	json_object *jstats = json_object_new_object();
-	json_object *jcount = json_object_new_int( data.m_SOFCnt );
-	json_object_object_add( jstats, "sof", jcount );
-	jcount = json_object_new_int( data.m_readAborts );
-	json_object_object_add( jstats, "readaborts", jcount );
-	jcount = json_object_new_int( data.m_badChecksum );
-	json_object_object_add( jstats, "badchecksum", jcount );
-	jcount = json_object_new_int( data.m_readCnt );
-	json_object_object_add( jstats, "read", jcount );
-	jcount = json_object_new_int( data.m_writeCnt );
-	json_object_object_add( jstats, "write", jcount );
-	jcount = json_object_new_int( data.m_CANCnt );
-	json_object_object_add( jstats, "can", jcount );
-	jcount = json_object_new_int( data.m_NAKCnt );
-	json_object_object_add( jstats, "nak", jcount );
-	jcount = json_object_new_int( data.m_ACKCnt );
-	json_object_object_add( jstats, "ack", jcount );
-	jcount = json_object_new_int( data.m_OOFCnt );
-	json_object_object_add( jstats, "oof", jcount );
-	jcount = json_object_new_int( data.m_dropped );
-	json_object_object_add( jstats, "dropped", jcount );
-	jcount = json_object_new_int( data.m_retries );
-	json_object_object_add( jstats, "retries", jcount );
-	jcount = json_object_new_int( data.m_callbacks );
-	json_object_object_add( jstats, "callbacks", jcount );
-	jcount = json_object_new_int( data.m_badroutes );
-	json_object_object_add( jstats, "badroutes", jcount );
-	jcount = json_object_new_int( data.m_noack );
-	json_object_object_add( jstats, "noack", jcount );
-	jcount = json_object_new_int( data.m_netbusy );
-	json_object_object_add( jstats, "netbusy", jcount );
-	jcount = json_object_new_int( data.m_notidle );
-	json_object_object_add( jstats, "notidle", jcount );
-	jcount = json_object_new_int( data.m_nondelivery );
-	json_object_object_add( jstats, "nondelivery", jcount );
-	jcount = json_object_new_int( data.m_routedbusy );
-	json_object_object_add( jstats, "routedbusy", jcount );
-	jcount = json_object_new_int( data.m_broadcastReadCnt );
-	json_object_object_add( jstats, "broadcastread", jcount );
-	jcount = json_object_new_int( data.m_broadcastWriteCnt );
-	json_object_object_add( jstats, "broadcastwrite", jcount );
+	snprintf(jsonData, sizeof(jsonData), "{\"sof\": %d, \"readaborts\": %d, \"badchecksum\": %d, \"read\": %d, \"write\": %d, \"can\": %d, \"nak\": %d, \"ack\": %d, \"oof\": %d, \"dropped\": %d, \"retries\": %d, \"callbacks\": %d, \"badroutes\": %d, \"noack\": %d, \"netbusy\": %d, \"notidle\": %d, \"nondelivery\": %d, \"routedbusy\": %d, \"broadcastread\": %d, \"broadcastwrite\": %d}\": %d }", data.m_SOFCnt, data.m_readAborts, data.m_badChecksum, data.m_readCnt, data.m_writeCnt, data.m_CANCnt, data.m_NAKCnt, data.m_ACKCnt, data.m_OOFCnt, data.m_dropped, data.m_retries, data.m_callbacks, data.m_badroutes, data.m_noack, data.m_netbusy, data.m_notidle, data.m_nondelivery, data.m_routedbusy, data.m_broadcastReadCnt, data.m_broadcastWriteCnt);
 
-	return json_object_to_json_string( jstats );
+	return jsonData;
 }
 
 //-----------------------------------------------------------------------------
@@ -5917,46 +5883,9 @@ const char* DomoZWave_GetNodeStatistics( uint32 home, int32 node )
 	Node::NodeData data;
 	Manager::Get()->GetNodeStatistics( home, node, &data );
 
-	json_object *jstats = json_object_new_object();
-	json_object *jcount = json_object_new_int( data.m_sentCnt );
-	json_object_object_add( jstats, "sent", jcount );
-	jcount = json_object_new_int( data.m_sentFailed );
-	json_object_object_add( jstats, "sentfailed", jcount );
+	snprintf(jsonData, sizeof(jsonData), "{\"sent\": %d, \"sentfailed\": %d, \"retries\": %d, \"received\": %d, \"receiveddups\": %d, \"receivedunsolicited\": %d, \"lastrequestrtt\": %d, \"lastresponsertt\": %d, \"sentts\": \"%s\", \"receivedts\": \"%s\", \"averagerequestrtt\": %d, \"averageresponsertt\": %d, \"quality\": %d}", data.m_sentCnt, data.m_sentFailed, data.m_retries, data.m_receivedCnt, data.m_receivedDups, data.m_receivedUnsolicited, data.m_lastRequestRTT, data.m_lastResponseRTT, data.m_sentTS.c_str(), data.m_receivedTS.c_str(), data.m_averageRequestRTT, data.m_averageResponseRTT, data.m_quality);
 
-	jcount = json_object_new_int( data.m_retries );
-	json_object_object_add( jstats, "retries", jcount );
-	jcount = json_object_new_int( data.m_receivedCnt );
-	json_object_object_add( jstats, "received", jcount );
-	jcount = json_object_new_int( data.m_receivedDups );
-	json_object_object_add( jstats, "receiveddups", jcount );
-	jcount = json_object_new_int( data.m_receivedUnsolicited );
-	json_object_object_add( jstats, "receivedunsolicited", jcount );
-	jcount = json_object_new_int( data.m_lastRequestRTT );
-	json_object_object_add( jstats, "lastrequestrtt", jcount );
-	jcount = json_object_new_int( data.m_lastResponseRTT );
-	json_object_object_add( jstats, "lastresponsertt", jcount );
-	json_object *jvalue = json_object_new_string( data.m_sentTS.c_str() );
-	json_object_object_add( jstats, "sentts", jvalue );
-	jvalue = json_object_new_string( data.m_receivedTS.c_str() );
-	json_object_object_add( jstats, "receivedts", jvalue );
-	jcount = json_object_new_int( data.m_averageRequestRTT );
-	json_object_object_add( jstats, "averagerequestrtt", jcount );
-	jcount = json_object_new_int( data.m_averageResponseRTT );
-	json_object_object_add( jstats, "averageresponsertt", jcount );
-	jcount = json_object_new_int( data.m_quality );
-	json_object_object_add( jstats, "quality", jcount );
-
-//memcpy( _data->m_lastReceivedMessage, m_lastReceivedMessage, sizeof(m_lastReceivedMessage) );
-//for( map<uint8,CommandClass*>::const_iterator it = m_commandClassMap.begin(); it != m_commandClassMap.end(); ++it )
-//{
-//  CommandClassData ccData;
-//  ccData.m_commandClassId = it->second->GetCommandClassId();
-//  ccData.m_sentCnt = it->second->GetSentCnt();
-//  ccData.m_receivedCnt = it->second->GetReceivedCnt();
-//  _data->m_ccData.push_back( ccData );
-//}
-
-	return json_object_to_json_string( jstats );
+	return jsonData;
 }
 
 //-----------------------------------------------------------------------------

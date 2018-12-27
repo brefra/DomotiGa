@@ -21,7 +21,8 @@
 
 
 CREATE DATABASE IF NOT EXISTS domotiga;
-GRANT ALL ON domotiga.* TO domouser@localhost IDENTIFIED BY 'kung-fu';
+CREATE USER 'domouser' IDENTIFIED BY 'kung-fu';
+GRANT ALL PRIVILEGES ON domotiga.* TO 'domouser'@'%';
 -- GRANT ALL ON domotiga.* TO domouser@'%' IDENTIFIED BY 'kung-fu';
 -- USE `domotiga`;
 
@@ -4525,7 +4526,7 @@ CREATE TABLE `settings_xmlrpc` (
 
 LOCK TABLES `settings_xmlrpc` WRITE;
 /*!40000 ALTER TABLE `settings_xmlrpc` DISABLE KEYS */;
-INSERT INTO `settings_xmlrpc` VALUES (0,-1,9009,10,0,-1),(1,-1,9009,10,0,-1);
+INSERT INTO `settings_xmlrpc` VALUES (0,0,9009,10,0,-1),(1,0,9009,10,0,-1);
 /*!40000 ALTER TABLE `settings_xmlrpc` ENABLE KEYS */;
 UNLOCK TABLES;
 
