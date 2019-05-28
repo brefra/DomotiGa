@@ -1657,6 +1657,8 @@ Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, iInstance
       iTypeId = 303
     Case "MQTT-JSON"
       iTypeId = 669
+    Case "MQTT-Tasmota"
+      iTypeId = 731
 
     ' ~~~ RFLink ~~
     Case "ALECTRO"

@@ -906,6 +906,7 @@ Private Sub DecodePublish(bBuffer As Byte[], iRetain As Integer, iQoS As Integer
   Try cTest = JSON.Decode(sPayload)
   If cTest And If cTest.Count Then
     sDevice = "MQTT-JSON"
+    if 
   Else
     sDevice = "MQTT-GENERIC"
   Endif
@@ -922,6 +923,8 @@ Private Sub DecodePublish(bBuffer As Byte[], iRetain As Integer, iQoS As Integer
         Devices.ValueUpdate(iDeviceId, 1, sPayload)
       Case "MQTT JSON Generic"
         DecodeJSON(iDeviceId, sPayload)
+      case "MQTT-Tasmota"
+        DecodeJSONTasmota(iDeviceId, sPayload)
       Default
         WriteDebugLog("ERROR: Unsupported devicetype '" & sDeviceTypeDescr & "'")
     End Select
@@ -938,10 +941,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub DecodeJSON(iDeviceId As Integer, sPayload As String)
+Private Sub DecodeJSON(iDeviceId As Integer, sPayload As String, optional bTasmota As Boolean)
 
   Dim iValueNum As Integer = 1
-  Dim cPayload As Collection
+  Dim cPayload, cWifi As Collection
   Dim sValue As String
 
   If $bDebug Then WriteDebugLog("Received JSON formatted data:")
@@ -953,7 +956,23 @@ Private Sub DecodeJSON(iDeviceId As Integer, sPayload As String)
         WriteDebugLog("Field: '" & cPayload.Key & "'")
         WriteDebugLog("Value: '" & sValue & "'")
       Endif
-      Devices.ValueUpdate(iDeviceId, iValueNum, sValue)
+      if bTasmota Then
+        Select cPayload.Key
+          Case "POWER", "POWER1"
+            Devices.ValueUpdate(iDeviceId, 1, sValue)
+          Case "Vcc"
+            Devices.ValueUpdate(iDeviceId, 2, sValue)
+          Case "Wifi"
+            cWifi = JSON.Decode(sValue)
+            If cWifi.Count Then
+              For Each sWifiValue in cWifi
+                ????
+              Next
+            Endif
+        End Select
+      Else
+        Devices.ValueUpdate(iDeviceId, iValueNum, sValue)
+      Endif
       Inc iValueNum
     Next
   Endif
